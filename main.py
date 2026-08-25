@@ -117,8 +117,13 @@ class MaxApi:
 
     def send_message(self, text: str, chat_id: Optional[int] = None,
                      user_id: Optional[int] = None,
-                     format_: Optional[str] = "markdown") -> Optional[Dict]:
-        """Отправка сообщения в чат или пользователю"""
+                     format_: Optional[str] = "markdown",
+                     keyboard: Optional[Dict] = None) -> Optional[Dict]:
+        """Отправка сообщения в чат или пользователю.
+
+        keyboard — inline-клавиатура в формате:
+            {"buttons": [[{"type": "message", "text": "Категории"}], ...]}
+        """
         if chat_id is None and user_id is None:
             raise ValueError("Нужно указать chat_id или user_id")
 
@@ -126,6 +131,11 @@ class MaxApi:
         body: Dict = {"text": text}
         if format_:
             body["format"] = format_
+        if keyboard:
+            body["attachments"] = [{
+                "type": "inline_keyboard",
+                "payload": keyboard,
+            }]
 
         return self._request("POST", "/messages", query=query, body=body)
 
@@ -210,22 +220,49 @@ class EventsBot:
         for uid in stale:
             del self.sessions[uid]
 
-    def _reply(self, chat_id: int, text: str):
-        self.api.send_message(text, chat_id=chat_id)
+    def _reply(self, chat_id: int, text: str, keyboard: Optional[Dict] = None):
+        self.api.send_message(text, chat_id=chat_id, keyboard=keyboard)
+
+    @staticmethod
+    def main_keyboard() -> Dict:
+        """Главная inline-клавиатура бота"""
+        return {
+            "buttons": [
+                [{"type": "message", "text": "Сегодня"}],
+                [{"type": "message", "text": "Категории"}],
+                [{"type": "message", "text": "Поиск"}],
+                [{"type": "message", "text": "Бесплатно"}, {"type": "message", "text": "Помощь"}],
+            ]
+        }
+
+    def categories_keyboard(self) -> Dict:
+        """Клавиатура с категориями мероприятий"""
+        cats = self.events.EVENT_CATEGORIES
+        popular = ["concert", "theater", "exhibition", "cinema", "festival", "quest",
+                   "tour", "recreation", "party", "kids"]
+        rows = []
+        for i in range(0, len(popular), 3):
+            rows.append([
+                {"type": "message", "text": cats[slug]}
+                for slug in popular[i:i + 3] if slug in cats
+            ])
+        rows.append([{"type": "message", "text": "Главное меню"}])
+        return {"buttons": rows}
 
     def _handle_command(self, user_id: int, chat_id: int, command: str):
         cmd = command.lower()
 
         if cmd == "/start":
             self._reset_session(user_id)
-            self._reply(chat_id, self.START_TEXT)
+            self._reply(chat_id, self.START_TEXT, keyboard=self.main_keyboard())
 
         elif cmd == "/help":
-            self._reply(chat_id, self.HELP_TEXT)
+            self._reply(chat_id, self.HELP_TEXT, keyboard=self.main_keyboard())
 
         elif cmd == "/cancel":
             self._reset_session(user_id)
-            self._reply(chat_id, "Ввод отменён. Выберите действие из меню.")
+            self._reply(chat_id, "Ввод отменён. Выберите действие из меню.",
+                        keyboard=self.main_keyboard())
 
         else:
             self._reply(chat_id, "Неизвестная команда. Введите /help")
@@ -312,19 +349,24 @@ class EventsBot:
         elif lower in ("бесплатно", "free", "бесплатные"):
             self._show_free_events(chat_id)
 
+        elif lower in ("помощь", "help", "справка"):
+            self._reset_session(user_id)
+            self._reply(chat_id, self.HELP_TEXT, keyboard=self.main_keyboard())
+
+        elif lower in ("главное меню", "меню", "start", "/start"):
+            self._reset_session(user_id)
+            self._reply(chat_id, self.START_TEXT, keyboard=self.main_keyboard())
+
         else:
             self._reply(chat_id,
-                "Не понял команду. Используйте кнопки или /help")
+                "Не понял команду. Используйте кнопки или /help",
+                keyboard=self.main_keyboard())
 
     def _show_categories(self, user_id: int, chat_id: int, session: UserSession):
-        """Показать список категорий"""
+        """Показать список категорий с кнопками"""
         session.state = BotState.WAITING_CATEGORY
-        cats = self.events.EVENT_CATEGORIES
-        lines = ["Выберите категорию мероприятия:\n"]
-        for slug, name in cats.items():
-            lines.append(f"  {name}")
-        lines.append("\nОтправьте название категории или /cancel")
-        self._reply(chat_id, "\n".join(lines))
+        self._reply(chat_id, "Выберите категорию мероприятия:",
+                    keyboard=self.categories_keyboard())
 
     def _show_today_events(self, chat_id: int):
         """Показать события дня"""
@@ -335,11 +377,12 @@ class EventsBot:
             return
 
         if not events:
-            self._reply(chat_id, "Сегодня мероприятий не найдено.")
+            self._reply(chat_id, "Сегодня мероприятий не найдено.",
+                        keyboard=self.main_keyboard())
         else:
             header = "Сегодня в Петербурге:\n\n"
             items = "\n\n".join([self.events.format_event(e) for e in events])
-            self._reply(chat_id, header + items)
+            self._reply(chat_id, header + items, keyboard=self.main_keyboard())
 
     def _show_free_events(self, chat_id: int):
         """Показать бесплатные события"""
@@ -350,11 +393,12 @@ class EventsBot:
             return
 
         if not events:
-            self._reply(chat_id, "Бесплатных мероприятий не найдено.")
+            self._reply(chat_id, "Бесплатных мероприятий не найдено.",
+                        keyboard=self.main_keyboard())
         else:
             header = "Бесплатные мероприятия в Петербурге:\n\n"
             items = "\n\n".join([self.events.format_event(e) for e in events])
-            self._reply(chat_id, header + items)
+            self._reply(chat_id, header + items, keyboard=self.main_keyboard())
 
     def _handle_text(self, user_id: int, chat_id: int, text: str):
         text = text.strip()
@@ -401,7 +445,7 @@ class EventsBot:
             user_id = update.get("user", {}).get("user_id")
             if chat_id is not None and user_id is not None:
                 self._reset_session(user_id)
-                self._reply(chat_id, self.START_TEXT)
+                self._reply(chat_id, self.START_TEXT, keyboard=self.main_keyboard())
 
     def run(self):
         me = self.api.get_me()
