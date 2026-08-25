@@ -298,16 +298,18 @@ class EventsBot:
         try:
             events = self.events.search_events(text, page_size=5)
         except EventsAPIError as e:
-            self._reply(chat_id, f"Ошибка поиска: {e}")
+            self._reply(chat_id, f"Ошибка поиска: {e}",
+                        keyboard=self.main_keyboard())
             self._reset_session(user_id)
             return True
 
         if not events:
-            self._reply(chat_id, f"По запросу '{text}' ничего не найдено.")
+            self._reply(chat_id, f"По запросу '{text}' ничего не найдено.",
+                        keyboard=self.main_keyboard())
         else:
             header = f"Результаты поиска: '{text}'\n\n"
             items = "\n\n".join([self.events.format_event(e) for e in events])
-            self._reply(chat_id, header + items)
+            self._reply(chat_id, header + items, keyboard=self.main_keyboard())
 
         self._reset_session(user_id)
         return True
@@ -348,14 +350,58 @@ class EventsBot:
                     keyboard=self.main_keyboard())
 
     def _match_category_name(self, lower: str) -> Optional[str]:
-        """Сопоставление текста с категорией (по имени или слагу)"""
+        """Сопоставление текста с категорией (по имени, слагу или синониму)"""
         cats = self.events.EVENT_CATEGORIES
+        norm = self._normalize_word(lower)
+
         for slug, name in cats.items():
             if lower == name.lower() or lower == slug.lower():
                 return slug
-            if len(lower) > 3 and name.lower() in lower:
+            # совпадение по основе слова (ед./мн. число и падежи)
+            if self._normalize_word(name.lower()) == norm:
+                return slug
+            # по вхождению основы (например «кино» в «Кинопоказы»)
+            name_norm = self._normalize_word(name.lower())
+            if len(norm) > 3 and name_norm in norm:
+                return slug
+
+        # синонимы/сокращения для форм, что не выводятся из названия
+        synonyms = {
+            "кино": "cinema",
+            "фильм": "cinema",
+            "квесты": "quest",
+            "мастер-класс": "education",
+            "мастер класс": "education",
+            "спорт": "recreation",
+            "активный отдых": "recreation",
+            "отдых": "recreation",
+            "праздник": "holiday",
+            "праздники": "holiday",
+            "музей": "exhibition",
+            "выставочный": "exhibition",
+            "шоу": "entertainment",
+            "спектакль": "theater",
+            "экскурсия": "tour",
+            "фестиваль": "festival",
+            "ярмарка": "stock",
+            "ярмарки": "stock",
+            "акции": "stock",
+            "скидки": "stock",
+        }
+        for syn, slug in synonyms.items():
+            if syn in lower:
                 return slug
         return None
+
+    @staticmethod
+    def _normalize_word(word: str) -> str:
+        """Приведение слова к основе: убирает частые окончания русских слов"""
+        word = word.lower().strip()
+        for suf in ("ый", "ие", "ия", "ые", "ы", "и", "а", "я", "й", "ь"):
+            if word.endswith(suf) and len(word) > len(suf) + 1:
+                word = word[:-len(suf)]
+                break
+        return word
 
     def _show_category_events(self, user_id: int, chat_id: int, slug: str):
         """Показать события категории (из состояния категорий)"""

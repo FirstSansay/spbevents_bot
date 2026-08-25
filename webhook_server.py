@@ -19,6 +19,8 @@ import os
 import sys
 import json
 import signal
+import threading
+import time
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Optional
@@ -33,12 +35,6 @@ from main import EventsBot
 
 # На каком адресе MAX доставляет события (для подписки)
 WEBHOOK_PUBLIC_URL = os.environ.get("WEBHOOK_PUBLIC_URL", "https://m-bot.consult-b2b.ru/webhook")
-
-# Типы событий, на которые подписываемся
-WEBHOOK_UPDATE_TYPES = os.environ.get(
-    "WEBHOOK_UPDATE_TYPES",
-    "message_created,message_callback,bot_started,bot_added",
-).split(",")
 
 
 class WebhookHandler(BaseHTTPRequestHandler):
@@ -104,10 +100,21 @@ class WebhookServer:
         self.bot = EventsBot(token)
         self.host = host
         self.port = port
+        self._stop = False
 
         self.httpd = ThreadingHTTPServer((host, port), WebhookHandler)
         # Привязываем бота к серверу, чтобы обработчик мог его использовать
         self.httpd.bot = self.bot
+
+    def _cleanup_loop(self):
+        """Периодически очищает состояние диалога пользователей,
+        чтобы память не росла неограниченно (аналог LongPoll-режима)."""
+        while not self._stop:
+            time.sleep(600)  # каждые 10 минут
+            try:
+                self.bot._cleanup_sessions()
+            except Exception as e:
+                print(f"Ошибка очистки сессий: {e}", file=sys.stderr)
 
     def run(self):
         me = self.bot.api.get_me()
@@ -121,10 +128,14 @@ class WebhookServer:
 
         def stop(signum, frame):
             print("\nПолучен сигнал остановки...", flush=True)
+            self._stop = True
             self.httpd.shutdown()
 
         signal.signal(signal.SIGINT, stop)
         signal.signal(signal.SIGTERM, stop)
+
+        cleaner = threading.Thread(target=self._cleanup_loop, daemon=True)
+        cleaner.start()
 
         self.httpd.serve_forever()
 
