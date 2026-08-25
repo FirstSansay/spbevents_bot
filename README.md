@@ -11,6 +11,8 @@
 - **Поиск** — текстовый поиск по мероприятиям
 - **Бесплатно** — бесплатные события
 
+Все функции доступны через inline-клавиатуру — кнопки встроены прямо в сообщения бота.
+
 ## Установка
 
 ```bash
@@ -20,17 +22,51 @@ pip install -r requirements.txt
 cp .env.example .env   # впишите токен бота
 ```
 
-## Запуск
+### Переменные окружения (`.env`)
+
+| Переменная | Описание |
+| --- | --- |
+| `MAX_BOT_TOKEN` | Токен бота MAX (раздел «Чат-боты» → «Расширенные настройки») |
+| `WEBHOOK_HOST` | Адрес, на котором слушает webhook-сервер (по умолчанию `0.0.0.0`) |
+| `WEBHOOK_PORT` | Порт webhook-сервера (по умолчанию `8000`) |
+| `WEBHOOK_PUBLIC_URL` | Публичный URL, на который MAX доставляет события |
+
+## Запуск (Webhook)
+
+Бот работает через **Webhook** (production-режим): MAX сам доставляет события на ваш URL — сервер не опрашивает платформу постоянно.
+
+```bash
+python webhook_server.py
+```
+
+Сервер слушает `WEBHOOK_HOST:WEBHOOK_PORT` и принимает события на `POST /webhook`.
+
+### Настройка подписки на события
+
+Подпишите бота на доставку событий на ваш публичный URL:
+
+```bash
+python subscribe_webhook.py --url https://your-domain.com/webhook
+```
+
+Управление подписками:
+
+```bash
+python subscribe_webhook.py --list     # показать текущие подписки
+python subscribe_webhook.py --delete   # удалить все подписки
+```
+
+> Webhook требует HTTPS и корректный URL, доступный из интернета. Публичный адрес должен совпадать с `WEBHOOK_PUBLIC_URL`.
+
+### Long Polling (для разработки)
+
+Для локального тестирования без сервера доступен Long Poll:
 
 ```bash
 python main.py
 ```
 
-Либо укажите токен переменной окружения:
-```bash
-export MAX_BOT_TOKEN=<токен>
-python main.py
-```
+> Long Polling ограничен по скорости и сроку хранения событий — для production используйте Webhook.
 
 ## Требования
 
@@ -42,10 +78,12 @@ python main.py
 
 ```
 spbevents_bot/
-├── main.py          # бот для мессенджера MAX
-├── events_api.py    # API-модуль для KudaGo
+├── main.py                # логика бота (обработка команд, состояний)
+├── events_api.py          # API-модуль для KudaGo
+├── webhook_server.py      # webhook-сервер (production-режим)
+├── subscribe_webhook.py   # управление webhook-подписками
 ├── certs/
-│   └── russian_trusted_root_ca.pem
+│   └── russian_trusted_root_ca.pem   # сертификат Минцифры
 ├── .env.example
 ├── .env
 ├── requirements.txt
@@ -53,22 +91,14 @@ spbevents_bot/
 └── README.md
 ```
 
-## Настройка кнопок стартового меню
+## Inline-клавиатура
 
-Бот работает через кнопки стартового меню. Кнопки настраиваются в панели MAX без изменений в коде:
+Бот отправляет кнопки прямо в сообщениях (`attachments` с типом `inline_keyboard`):
 
-1. Зайдите в [business.max.ru](https://business.max.ru) → ваш чат-бот → **Расширенные настройки**
-2. Найдите раздел «Кнопки меню» (или «Стартовое меню»)
-3. Добавьте кнопки с текстом, совпадающим с командами бота:
+- Главное меню: Сегодня / Категории / Поиск / Бесплатно / Помощь
+- Меню категорий: популярные категории + Главное меню
 
-| Надпись кнопки | Действие бота |
-| --- | --- |
-| Категории | выбор категории мероприятия |
-| Сегодня | события дня в Петербурге |
-| Поиск | запрос текста для поиска |
-| Бесплатно | бесплатные события |
-
-Бот получает нажатие кнопки как обычное текстовое сообщение и обрабатывает его в `_handle_free_input` (`main.py`). Также нажмите кнопку «Начать», чтобы при старте бота появлялось приветствие (`bot_started` → `START_TEXT`).
+Кнопки типа `message` — нажатие отправляет боту готовый текст, который обрабатывается в `_handle_free_input` (`main.py`).
 
 ## API
 
@@ -78,8 +108,32 @@ spbevents_bot/
 - `GET /search/` — текстовый поиск
 - `GET /event-categories/` — категории событий
 
+## Развёртывание на сервере (systemd)
+
+Пример unit-файла для запуска под systemd:
+
+```ini
+[Unit]
+Description=SPb events bot for MAX messenger (KudaGo API) — Webhook
+After=network.target
+
+[Service]
+Type=simple
+User=sansay
+WorkingDirectory=/path/to/spbevents_bot
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/path/to/spbevents_bot/.env
+ExecStart=/path/to/spbevents_bot/.venv/bin/python /path/to/spbevents_bot/webhook_server.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
 ## Примечания
 
 - **KudaGo API** — бесплатное, не требует регистрации
-- **Long Polling** — подходит для разработки. Для production используйте Webhook
+- **Webhook** — production-режим, MAX доставляет события на ваш URL
+- **Long Polling** — режим для разработки и тестирования
 - **Лицензия**: MIT
