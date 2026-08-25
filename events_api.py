@@ -96,7 +96,7 @@ class EventsAPI:
             "location": self.LOCATION,
             "page": page,
             "page_size": page_size,
-            "fields": "id,title,dates,place,images,categories,price,is_free",
+            "fields": "id,title,slug,site_url,dates,place,images,categories,price,is_free",
             "expand": "place,dates",
         }
 
@@ -149,7 +149,13 @@ class EventsAPI:
         is_free = event.get("is_free", False)
         price = event.get("price", "")
 
-        link = f"https://kudago.com/spb/event/{event.get('id', '')}"
+        site_url = event.get("site_url")
+        if site_url:
+            link = site_url
+        elif event.get("slug"):
+            link = f"https://kudago.com/spb/event/{event['slug']}/"
+        else:
+            link = f"https://kudago.com/spb/event/{event.get('id', '')}"
 
         lines = [
             f"🎭 {title}",

@@ -281,34 +281,15 @@ class EventsBot:
     def _handle_category_selection(self, user_id: int, chat_id: int,
                                    session: UserSession, text: str) -> bool:
         """Обработка выбора категории"""
-        categories = self.events.EVENT_CATEGORIES
+        slug = self._match_category_name(text.lower().strip())
 
-        selected = None
-        for slug, name in categories.items():
-            if text.lower() in name.lower() or text.lower() == slug:
-                selected = slug
-                break
-
-        if not selected:
+        if not slug:
             self._reply(chat_id,
-                "Категория не найдена. Попробуйте ещё раз или отправьте /cancel")
+                "Категория не найдена. Попробуйте ещё раз или отправьте /cancel",
+                keyboard=self.categories_keyboard())
             return True
 
-        try:
-            events = self.events.get_events_by_category(selected, page_size=5)
-        except EventsAPIError as e:
-            self._reply(chat_id, f"Ошибка при получении событий: {e}")
-            self._reset_session(user_id)
-            return True
-
-        if not events:
-            self._reply(chat_id, f"Событий в категории '{categories[selected]}' не найдено.")
-        else:
-            header = f"События в категории: {categories[selected]}\n\n"
-            items = "\n\n".join([self.events.format_event(e) for e in events])
-            self._reply(chat_id, header + items)
-
-        self._reset_session(user_id)
+        self._show_category_events(user_id, chat_id, slug)
         return True
 
     def _handle_search_query(self, user_id: int, chat_id: int,
@@ -358,9 +339,41 @@ class EventsBot:
             self._reply(chat_id, self.START_TEXT, keyboard=self.main_keyboard())
 
         else:
-            self._reply(chat_id,
-                "Не понял команду. Используйте кнопки или /help",
-                keyboard=self.main_keyboard())
+            cat_slug = self._match_category_name(lower)
+            if cat_slug:
+                self._show_category_events(user_id, chat_id, cat_slug)
+            else:
+                self._reply(chat_id,
+                    "Не понял команду. Используйте кнопки или /help",
+                    keyboard=self.main_keyboard())
+
+    def _match_category_name(self, lower: str) -> Optional[str]:
+        """Сопоставление текста с категорией (по имени или слагу)"""
+        cats = self.events.EVENT_CATEGORIES
+        for slug, name in cats.items():
+            if lower == name.lower() or lower == slug.lower():
+                return slug
+            if len(lower) > 3 and name.lower() in lower:
+                return slug
+        return None
+
+    def _show_category_events(self, user_id: int, chat_id: int, slug: str):
+        """Показать события категории (из состояния категорий)"""
+        category = self.events.EVENT_CATEGORIES[slug]
+        try:
+            events = self.events.get_events_by_category(slug, page_size=5)
+        except EventsAPIError as e:
+            self._reply(chat_id, f"Ошибка при получении событий: {e}")
+            return
+
+        self._reset_session(user_id)
+        if not events:
+            self._reply(chat_id, f"Событий в категории '{category}' не найдено.",
+                        keyboard=self.categories_keyboard())
+        else:
+            header = f"События в категории: {category}\n\n"
+            items = "\n\n".join([self.events.format_event(e) for e in events])
+            self._reply(chat_id, header + items, keyboard=self.categories_keyboard())
 
     def _show_categories(self, user_id: int, chat_id: int, session: UserSession):
         """Показать список категорий с кнопками"""
